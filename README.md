@@ -100,7 +100,22 @@ node deploy.mjs destroy          # tear down the last deployment
 ```
 
 The wizard auto-generates all secrets (DB password, JWT/session secrets, the
-encryption key) so you never have to.
+encryption key) so you never have to. Every step opens with a **"What you need
+for this step"** checklist so there are no surprises.
+
+## Resuming / re-running
+
+The deployer is safe to stop and re-run — it remembers where you were. If a
+previous run left configuration or a half-finished provision behind, running
+`node deploy.mjs` again detects it and offers to:
+
+- **Continue / resume** — re-runs Terraform with your saved settings (idempotent;
+  finishes an interrupted run or pushes config changes). No questions to re-answer.
+- **Start a new deployment** — re-enter everything from scratch.
+- **Tear it down** — destroy the resources.
+
+So if `terraform apply` is interrupted (network blip, you closed the terminal,
+etc.), just run the command again and pick **Resume**.
 
 ## After deploying
 

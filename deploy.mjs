@@ -110,6 +110,13 @@ function section(n, total, title) {
   log();
 }
 
+// A "Requirements:" block listing what a step needs.
+function reqs(items) {
+  log(color('yellow', '  What you need for this step:'));
+  for (const it of items) log(`    ${color('yellow', '•')} ${color('dim', it)}`);
+  log();
+}
+
 // ── Secret generation ────────────────────────────────────────────────────────
 const randHex = (bytes) => crypto.randomBytes(bytes).toString('hex');
 const randPass = () => crypto.randomBytes(18).toString('base64url'); // url-safe, no special chars
@@ -161,6 +168,43 @@ function buildEnv(a) {
   lines.push('LICENSE_ENFORCEMENT=false');
   lines.push('');
   return lines.join('\n');
+}
+
+// ── Deployment state / resume ────────────────────────────────────────────────
+function saveState(obj) {
+  fs.writeFileSync(STATE_FILE, JSON.stringify(obj, null, 2));
+}
+
+/** Returns saved deployment state if a previous run left config behind, else null. */
+function existingDeployment() {
+  if (!fs.existsSync(STATE_FILE)) return null;
+  let state;
+  try { state = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); } catch { return null; }
+  if (!state?.dir) return null;
+  const dir = path.join(__dirname, state.dir);
+  const hasConfig = fs.existsSync(path.join(dir, '.env')) && fs.existsSync(path.join(dir, 'terraform.tfvars'));
+  if (!hasConfig) return null;
+  return { ...state, provisioned: isProvisioned(state.dir) };
+}
+
+/** True if Terraform state for this dir contains created resources. */
+function isProvisioned(relDir) {
+  const tfstate = path.join(__dirname, relDir, 'terraform.tfstate');
+  if (!fs.existsSync(tfstate)) return false;
+  try {
+    const s = JSON.parse(fs.readFileSync(tfstate, 'utf8'));
+    return Array.isArray(s.resources) && s.resources.length > 0;
+  } catch { return false; }
+}
+
+/** Reads the configured domain (SITE_ADDRESS) back out of a generated .env. */
+function readDomainFromEnv(relDir) {
+  try {
+    const env = fs.readFileSync(path.join(__dirname, relDir, '.env'), 'utf8');
+    const m = env.match(/^SITE_ADDRESS=(.+)$/m);
+    const v = m?.[1]?.trim();
+    return v && v !== ':80' ? v : '';
+  } catch { return ''; }
 }
 
 // ── tfvars builder ───────────────────────────────────────────────────────────
@@ -315,11 +359,50 @@ async function deploy(generateOnly) {
     'This wizard provisions one small VM on your cloud and runs the full Enlight',
     'stack on it (app + database + queue + HTTPS proxy). It takes ~5–10 minutes.',
     'Everything you enter is saved locally; nothing is sent anywhere but your cloud.',
+    'You can stop and re-run this command at any time to pick up where you left off.',
   ]);
+
+  // ── Resume detection ──
+  // If a previous run left config (or a partial/complete provision) behind, offer
+  // to continue it instead of starting from scratch.
+  const prev = generateOnly ? null : existingDeployment();
+  if (prev) {
+    const pdef = CLOUDS[prev.cloud];
+    log();
+    if (prev.provisioned) {
+      ok(`Found an existing ${pdef?.label ?? prev.cloud} deployment.`);
+      info(['Re-applying is safe and idempotent — use it to finish an interrupted run or push config changes.']);
+    } else {
+      ok(`Found a saved ${pdef?.label ?? prev.cloud} configuration that hasn\'t been provisioned yet.`);
+      info(['You can finish provisioning it now without re-entering anything.']);
+    }
+    const choice = await select('What would you like to do?', [
+      { label: prev.provisioned ? 'Resume / update this deployment' : 'Continue provisioning it', value: 'resume',
+        desc: 'Re-run Terraform with the saved settings (recommended).' },
+      { label: 'Start a new deployment', value: 'new',
+        desc: 'Re-enter everything. Overwrites the saved config for that cloud.' },
+      { label: 'Tear it down', value: 'destroy', desc: 'Destroy the cloud resources and remove state.' },
+    ]);
+    if (choice === 'resume') {
+      await provision(pdef ?? { dir: prev.dir, label: prev.cloud }, readDomainFromEnv(prev.dir));
+      return;
+    }
+    if (choice === 'destroy') {
+      await destroy();
+      return;
+    }
+    // 'new' → fall through to the fresh wizard below.
+    log();
+    warn('Starting a new deployment. The previous config for the chosen cloud will be overwritten.');
+  }
 
   // ── Step 1: cloud ──
   section(1, 4, 'Choose your cloud');
-  info(['Enlight runs on a single VM. Pick where to create it — you\'ll need an account there.']);
+  reqs([
+    'An account with one of: Google Cloud, AWS, or DigitalOcean.',
+    'Terraform — installed automatically later if you don\'t have it.',
+  ]);
+  info(['Enlight runs on a single VM. Pick where to create it.']);
   const cloud = await select('Cloud provider', [
     { label: CLOUDS.gcp.label, value: 'gcp', desc: CLOUDS.gcp.menuDesc },
     { label: CLOUDS.aws.label, value: 'aws', desc: CLOUDS.aws.menuDesc },
@@ -331,6 +414,10 @@ async function deploy(generateOnly) {
 
   // ── Step 2: AI ──
   section(2, 4, 'AI configuration');
+  reqs([
+    'Optional: an API key for your AI platform (Anthropic or OpenAI) — or add it in-app later.',
+    'Optional: an embeddings key (Voyage or OpenAI) for knowledge base search.',
+  ]);
   info([
     'Enlight\'s agent uses a large language model to triage and answer tickets.',
     'Choose a platform now — you can change it any time in Settings → AI Keys.',
@@ -370,6 +457,11 @@ async function deploy(generateOnly) {
 
   // ── Step 3: domain ──
   section(3, 4, 'Domain & HTTPS');
+  reqs([
+    'Optional: a domain name (or subdomain) you own.',
+    'Optional: access to that domain\'s DNS to add an A record after provisioning.',
+    'No domain? You can skip this and still deploy (plain HTTP).',
+  ]);
   info([
     'If you have a domain, Enlight gets automatic HTTPS (Caddy + Let\'s Encrypt) — no certs to buy.',
     'After this finishes you\'ll point a DNS A record at the server\'s IP (shown at the end).',
@@ -380,6 +472,10 @@ async function deploy(generateOnly) {
 
   // ── Step 4: cloud settings ──
   section(4, 4, `${def.label} settings`);
+  reqs([
+    `Your ${def.label} credentials ready (the checklist shown after Step 1).`,
+    'Region / size values — sensible defaults are provided, just press Enter to accept.',
+  ]);
   const cloudVars = await def.prompts();
   log();
 
@@ -398,16 +494,20 @@ async function deploy(generateOnly) {
   log(color('dim', '  Secrets were auto-generated. These files contain credentials — keep them private.'));
   log();
 
-  fs.writeFileSync(STATE_FILE, JSON.stringify({ cloud, dir: def.dir }, null, 2));
+  saveState({ cloud, dir: def.dir });
 
   if (generateOnly) {
     ok('Generated config only (--generate-only). Run terraform yourself when ready:');
-    log(color('dim', `    terraform -chdir=${def.dir} init && terraform -chdir=${def.dir} apply`));
+    info([`  terraform -chdir=${def.dir} init && terraform -chdir=${def.dir} apply`]);
     rl.close();
     return;
   }
 
-  // ── Provision ──
+  await provision(def, domain);
+}
+
+// ── Provision (shared by fresh deploys and resumes) ──────────────────────────
+async function provision(def, domain) {
   // Make sure Terraform is available — offer to install it if not.
   let tf = resolveTerraform();
   if (tf) {
@@ -435,17 +535,23 @@ async function deploy(generateOnly) {
     return;
   }
 
-  const go = await confirm(`Provision now on ${def.label}? This creates real cloud resources.`, true);
-  if (!go) { warn('Skipped provisioning. Config files are ready when you are.'); rl.close(); return; }
+  const go = await confirm(`Provision now on ${def.label}? This creates/updates real cloud resources.`, true);
+  if (!go) { warn('Skipped provisioning. Config files are saved — run again to resume.'); rl.close(); return; }
   rl.close();
 
   log();
   log(color('blue', '  → terraform init'));
-  if (await runTf(def.dir, ['init', '-input=false']) !== 0) { err('terraform init failed.'); process.exit(1); }
+  if (await runTf(def.dir, ['init', '-input=false']) !== 0) {
+    err('terraform init failed. Fix the issue above and run `node deploy.mjs` again to resume.');
+    process.exit(1);
+  }
 
   log();
   log(color('blue', '  → terraform apply'));
-  if (await runTf(def.dir, ['apply', '-input=false', '-auto-approve']) !== 0) { err('terraform apply failed.'); process.exit(1); }
+  if (await runTf(def.dir, ['apply', '-input=false', '-auto-approve']) !== 0) {
+    err('terraform apply failed. It\'s safe to run `node deploy.mjs` again to resume from where it stopped.');
+    process.exit(1);
+  }
 
   // ── Show outputs ──
   log();
@@ -492,6 +598,7 @@ async function destroy() {
   const tf = resolveTerraform();
   if (!tf) { err('Terraform not found (system PATH or ./bin). Install it, then retry.'); return; }
   TERRAFORM = tf;
+  if (await runTf(dir, ['init', '-input=false']) !== 0) { err('terraform init failed.'); return; }
   await runTf(dir, ['destroy', '-input=false', '-auto-approve']);
   ok('Destroyed.');
 }
