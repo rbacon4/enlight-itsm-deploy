@@ -10,5 +10,8 @@ terraform/**/*.tfstate
 terraform/**/*.tfstate.*
 terraform/**/crash.log
 
+# Terraform binary downloaded by the wizard
+bin/
+
 node_modules/
 .DS_Store

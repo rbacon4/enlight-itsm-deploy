@@ -75,9 +75,10 @@ runs on one modest instance. Default sizes:
 ## Prerequisites
 
 1. **Node.js 18+** (to run the wizard)
-2. **[Terraform](https://developer.hashicorp.com/terraform/install)** (the wizard
-   uses it to provision). If it's not installed, the wizard still generates all
-   config and prints the exact commands to run.
+2. **Terraform** — used to provision. **You don't need to install it yourself**:
+   if it's missing, the wizard offers to download the official binary into `./bin`
+   automatically. (You can also pre-install it with `node deploy.mjs install-terraform`,
+   or `brew install terraform`.)
 3. **Cloud credentials** for your chosen provider:
 
    | Cloud | Setup |
@@ -94,6 +95,7 @@ later in the app under Settings → AI Keys).
 ```bash
 node deploy.mjs                  # interactive deploy
 node deploy.mjs --generate-only  # write config files but don't provision
+node deploy.mjs install-terraform # download Terraform into ./bin (no deploy)
 node deploy.mjs destroy          # tear down the last deployment
 ```
 

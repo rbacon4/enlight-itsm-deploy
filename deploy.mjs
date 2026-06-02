@@ -173,14 +173,67 @@ function buildTfvars(obj) {
   return Object.entries(obj).map(([k, v]) => tfvarLine(k, v)).join('\n') + '\n';
 }
 
-// ── Terraform runner ─────────────────────────────────────────────────────────
-function hasTerraform() {
-  const r = spawnSync('terraform', ['version'], { stdio: 'ignore' });
-  return r.status === 0;
+// ── Terraform: resolve, install, run ─────────────────────────────────────────
+// The binary the wizard uses. Set to the system `terraform` or a locally
+// downloaded one in ./bin.
+let TERRAFORM = 'terraform';
+const TF_FALLBACK_VERSION = '1.9.8';
+const localTfPath = () =>
+  path.join(__dirname, 'bin', process.platform === 'win32' ? 'terraform.exe' : 'terraform');
+
+function works(bin) {
+  return spawnSync(bin, ['version'], { stdio: 'ignore' }).status === 0;
 }
+
+/** Find a usable Terraform (system PATH, then ./bin). Returns the path or null. */
+function resolveTerraform() {
+  if (works('terraform')) return 'terraform';
+  const local = localTfPath();
+  if (fs.existsSync(local) && works(local)) return local;
+  return null;
+}
+
+/** Download + extract the official Terraform binary into ./bin. Sets TERRAFORM. */
+async function installTerraform() {
+  const os = { darwin: 'darwin', linux: 'linux', win32: 'windows' }[process.platform];
+  const arch = { x64: 'amd64', arm64: 'arm64' }[process.arch];
+  if (!os || !arch) throw new Error(`Unsupported platform ${process.platform}/${process.arch} — install Terraform manually.`);
+
+  // Resolve the current version (fall back to a pinned one if the API is unreachable).
+  let version = TF_FALLBACK_VERSION;
+  try {
+    const r = await fetch('https://checkpoint-api.hashicorp.com/v1/check/terraform', { signal: AbortSignal.timeout(8000) });
+    const j = await r.json();
+    if (j?.current_version) version = j.current_version;
+  } catch { /* use fallback */ }
+
+  const url = `https://releases.hashicorp.com/terraform/${version}/terraform_${version}_${os}_${arch}.zip`;
+  const binDir = path.join(__dirname, 'bin');
+  fs.mkdirSync(binDir, { recursive: true });
+  const zipPath = path.join(binDir, 'terraform.zip');
+
+  log(color('dim', `  Downloading Terraform ${version} (${os}/${arch})…`));
+  const resp = await fetch(url, { signal: AbortSignal.timeout(180000) });
+  if (!resp.ok) throw new Error(`Download failed (HTTP ${resp.status}) from ${url}`);
+  fs.writeFileSync(zipPath, Buffer.from(await resp.arrayBuffer()));
+
+  // Extract (the zip holds a single `terraform` binary). Try unzip, then bsdtar.
+  let extracted = spawnSync('unzip', ['-o', zipPath, '-d', binDir], { stdio: 'ignore' }).status === 0;
+  if (!extracted) extracted = spawnSync('tar', ['-xf', zipPath, '-C', binDir], { stdio: 'ignore' }).status === 0;
+  fs.rmSync(zipPath, { force: true });
+  if (!extracted) throw new Error('Could not unzip the download (need `unzip` or a zip-capable `tar`).');
+
+  const bin = localTfPath();
+  if (!fs.existsSync(bin)) throw new Error('Extraction succeeded but the terraform binary was not found.');
+  fs.chmodSync(bin, 0o755);
+  if (!works(bin)) throw new Error('The downloaded Terraform binary did not run.');
+  TERRAFORM = bin;
+  return version;
+}
+
 function runTf(dir, args) {
   return new Promise((res) => {
-    const p = spawn('terraform', [`-chdir=${dir}`, ...args], { stdio: 'inherit' });
+    const p = spawn(TERRAFORM, [`-chdir=${dir}`, ...args], { stdio: 'inherit' });
     p.on('close', (code) => res(code));
   });
 }
@@ -355,10 +408,29 @@ async function deploy(generateOnly) {
   }
 
   // ── Provision ──
-  if (!hasTerraform()) {
-    warn('Terraform is not installed — config files are ready, but I can\'t provision for you.');
-    log(color('dim', '  Install Terraform: https://developer.hashicorp.com/terraform/install'));
-    log(color('dim', `  Then run:  terraform -chdir=${def.dir} init && terraform -chdir=${def.dir} apply`));
+  // Make sure Terraform is available — offer to install it if not.
+  let tf = resolveTerraform();
+  if (tf) {
+    TERRAFORM = tf;
+  } else {
+    warn('Terraform is required to provision, and it isn\'t installed.');
+    const installNow = await confirm('Download and install Terraform now (official HashiCorp binary)?', true);
+    if (installNow) {
+      try {
+        const v = await installTerraform();
+        ok(`Terraform ${v} installed into ./bin.`);
+        tf = TERRAFORM;
+      } catch (e) {
+        err(`Automatic install failed: ${e.message}`);
+      }
+    }
+  }
+  if (!tf) {
+    warn('Config files are ready, but provisioning needs Terraform.');
+    info([
+      'Install it from https://developer.hashicorp.com/terraform/install, then run:',
+      `  terraform -chdir=${def.dir} init && terraform -chdir=${def.dir} apply`,
+    ]);
     rl.close();
     return;
   }
@@ -377,7 +449,7 @@ async function deploy(generateOnly) {
 
   // ── Show outputs ──
   log();
-  const out = spawnSync('terraform', [`-chdir=${def.dir}`, 'output', '-json'], { encoding: 'utf8' });
+  const out = spawnSync(TERRAFORM, [`-chdir=${def.dir}`, 'output', '-json'], { encoding: 'utf8' });
   let ip = '';
   let httpUrl = '';
   try {
@@ -417,7 +489,9 @@ async function destroy() {
   const sure = await confirm('Are you sure?', false);
   rl.close();
   if (!sure) { log('  Cancelled.'); return; }
-  if (!hasTerraform()) { err('Terraform not installed.'); return; }
+  const tf = resolveTerraform();
+  if (!tf) { err('Terraform not found (system PATH or ./bin). Install it, then retry.'); return; }
+  TERRAFORM = tf;
   await runTf(dir, ['destroy', '-input=false', '-auto-approve']);
   ok('Destroyed.');
 }
@@ -426,8 +500,21 @@ async function destroy() {
 const cmd = process.argv[2];
 const generateOnly = process.argv.includes('--generate-only');
 try {
-  if (cmd === 'destroy') await destroy();
-  else await deploy(generateOnly);
+  if (cmd === 'destroy') {
+    await destroy();
+  } else if (cmd === 'install-terraform') {
+    // Standalone: install Terraform without deploying anything.
+    const existing = resolveTerraform();
+    if (existing && existing !== localTfPath()) {
+      ok(`Terraform is already installed (${existing}).`);
+    } else {
+      const v = await installTerraform();
+      ok(`Terraform ${v} installed into ./bin/terraform.`);
+    }
+    rl.close();
+  } else {
+    await deploy(generateOnly);
+  }
 } catch (e) {
   err(e?.message ?? String(e));
   process.exit(1);
