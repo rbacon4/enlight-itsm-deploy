@@ -1,0 +1,14 @@
+# Generated config — contains secrets. NEVER commit.
+terraform/**/.env
+terraform/**/*.tfvars
+.enlight-deploy.json
+
+# Terraform state + working files (state contains secrets)
+terraform/**/.terraform/
+terraform/**/.terraform.lock.hcl
+terraform/**/*.tfstate
+terraform/**/*.tfstate.*
+terraform/**/crash.log
+
+node_modules/
+.DS_Store
