@@ -10,5 +10,5 @@ output "url" {
 
 output "ssh" {
   description = "SSH command (uses your gcloud-configured key)."
-  value       = "gcloud compute ssh ${google_compute_instance.enlight.name} --zone ${var.zone}"
+  value       = "gcloud compute ssh ${google_compute_instance.enlight.name} --zone ${var.zone} --project ${var.project_id}"
 }
