@@ -28,16 +28,21 @@ creates your organisation and admin account.
 
 ## What it builds
 
-A single VM running three containers via Docker Compose:
+A single VM running four containers via Docker Compose:
 
 | Container | Image | Purpose |
 |---|---|---|
+| `caddy` | `caddy:2-alpine` | reverse proxy + **automatic HTTPS** (Let's Encrypt) |
 | `app` | built from `enlight-itsm/Dockerfile.prod` | API + BullMQ worker + React SPA |
 | `postgres` | `pgvector/pgvector:pg16` | database + knowledge-base vector search |
 | `redis` | `redis:7-alpine` | job queue |
 
-Database migrations run automatically on first boot. The app is served on
-**port 80**.
+Database migrations run automatically on first boot.
+
+**HTTPS is automatic.** If you give the wizard a domain name, Caddy obtains and
+renews a TLS certificate for it and serves the app over HTTPS (port 443, with
+HTTP redirected). If you don't supply a domain, Caddy serves plain HTTP on
+port 80 — and you can add a domain later without redeploying.
 
 This single-VM layout matches Enlight's design goal — a self-hosted product that
 runs on one modest instance. Default sizes:
@@ -82,14 +87,23 @@ encryption key) so you never have to.
 - The in-app **setup wizard** creates your first organisation + super admin.
 - Configure Slack, AI keys, etc. from **Settings** inside the app.
 
-### Adding a domain + HTTPS
+### HTTPS
 
-The instance serves plain HTTP on port 80. To add HTTPS:
+**With a domain (recommended):** enter it when the wizard asks. Point an A record
+for that domain at the server's public IP (shown after provisioning). Within a
+minute or two Caddy issues a Let's Encrypt certificate and the site is live on
+`https://your-domain` — no extra steps.
 
-1. Point an A record at the server's public IP.
-2. SSH in, set `WEB_URL` / `API_URL` in `/opt/enlight/.env` to `https://your-domain`.
-3. Put a TLS-terminating reverse proxy in front (Caddy is easiest — it gets
-   certificates automatically), or front the VM with your cloud's load balancer.
+**Added a domain later?** SSH into the VM and edit `/opt/enlight/.env`:
+
+```bash
+SITE_ADDRESS=itsm.example.com          # was ":80"
+API_URL=https://itsm.example.com
+WEB_URL=https://itsm.example.com
+```
+
+then `cd /opt/enlight && docker compose up -d`. Caddy picks up the new domain and
+secures it automatically.
 
 ## How it works
 

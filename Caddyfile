@@ -1,0 +1,19 @@
+# Caddy reverse proxy for Enlight ITSM.
+#
+# SITE_ADDRESS comes from the environment (set by the deploy tool in .env):
+#   • a hostname like  itsm.acme.com  → Caddy automatically obtains and renews a
+#     Let's Encrypt TLS certificate and serves HTTPS (HTTP is redirected to HTTPS).
+#   • ":80" (the default when no domain is supplied) → Caddy serves plain HTTP.
+#
+# All traffic is reverse-proxied to the app container on its internal port 3000.
+
+{$SITE_ADDRESS::80} {
+	reverse_proxy app:3000
+
+	# Stream large uploads (attachments, KB files) without buffering limits.
+	request_body {
+		max_size 25MB
+	}
+
+	encode gzip zstd
+}

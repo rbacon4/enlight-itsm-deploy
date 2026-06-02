@@ -125,12 +125,16 @@ function buildEnv(a) {
   if (a.voyageKey) lines.push(`VOYAGE_API_KEY=${a.voyageKey}`);
   lines.push('EMBEDDING_PROVIDER=voyage');
   lines.push('');
+  lines.push('# Reverse proxy / TLS (read by Caddy). A hostname enables automatic HTTPS;');
+  lines.push('# ":80" serves plain HTTP.');
+  lines.push(`SITE_ADDRESS=${a.domain || ':80'}`);
+  lines.push('');
   lines.push('# Public URLs — used for email/portal/SSO links.');
   if (a.domain) {
     lines.push(`API_URL=https://${a.domain}`);
     lines.push(`WEB_URL=https://${a.domain}`);
   } else {
-    lines.push('# No domain set — update these to your server URL for correct links:');
+    lines.push('# No domain set — update these (and SITE_ADDRESS above) once you add one:');
     lines.push('# API_URL=https://your-domain');
     lines.push('# WEB_URL=https://your-domain');
   }
@@ -227,7 +231,8 @@ async function deploy(generateOnly) {
     openaiKey = await ask('OpenAI API key', {});
     voyageKey = await ask('Voyage API key (knowledge base embeddings)', {});
   }
-  const domain = await ask('Domain name pointing at this server (optional)', {});
+  log(color('dim', '  Tip: supplying a domain enables automatic HTTPS (Caddy + Let\'s Encrypt).'));
+  const domain = await ask('Domain name for this server (optional, enables HTTPS)', {});
   log();
 
   // ── Cloud-specific ──
@@ -283,21 +288,31 @@ async function deploy(generateOnly) {
   // ── Show outputs ──
   log();
   const out = spawnSync('terraform', [`-chdir=${def.dir}`, 'output', '-json'], { encoding: 'utf8' });
-  let url = '';
+  let ip = '';
+  let httpUrl = '';
   try {
     const o = JSON.parse(out.stdout || '{}');
-    url = o.url?.value ?? '';
+    ip = o.public_ip?.value ?? '';
+    httpUrl = o.url?.value ?? '';
     log(color('green', color('bold', '  🎉 Deployed!')));
-    if (o.public_ip) log(`     Public IP : ${color('bold', o.public_ip.value)}`);
-    if (url)         log(`     URL       : ${color('bold', url)}`);
-    if (o.ssh)       log(`     SSH       : ${color('dim', o.ssh.value)}`);
+    if (ip)      log(`     Public IP : ${color('bold', ip)}`);
+    if (domain)  log(`     URL       : ${color('bold', `https://${domain}`)} ${color('dim', '(after DNS + cert)')}`);
+    else if (httpUrl) log(`     URL       : ${color('bold', httpUrl)}`);
+    if (o.ssh)   log(`     SSH       : ${color('dim', o.ssh.value)}`);
   } catch { /* ignore */ }
 
   log();
   log(color('bold', '  Next steps'));
-  log(`    1. Wait ~3–5 min for the first build to finish on the VM.`);
-  log(`    2. Open ${url || 'the URL above'} — the setup wizard will create your org + admin.`);
-  if (!domain) log(color('dim', `    3. For correct email/portal links, set WEB_URL/API_URL in /opt/enlight/.env to your server URL and run \`docker compose up -d\`.`));
+  if (domain) {
+    log(`    1. Point an A record for ${color('bold', domain)} at ${color('bold', ip || 'the IP above')}.`);
+    log(`    2. Wait ~3–5 min for the first build, then Caddy auto-issues a TLS cert.`);
+    log(`    3. Open ${color('bold', `https://${domain}`)} — the setup wizard creates your org + admin.`);
+  } else {
+    log(`    1. Wait ~3–5 min for the first build to finish on the VM.`);
+    log(`    2. Open ${httpUrl || 'the URL above'} — the setup wizard creates your org + admin.`);
+    log(color('dim', `    3. To add HTTPS later: point a domain at the IP, then set SITE_ADDRESS (and`));
+    log(color('dim', `       WEB_URL/API_URL) in /opt/enlight/.env and run \`docker compose up -d\`.`));
+  }
   log();
   log(color('dim', `  Tear down later with:  node deploy.mjs destroy`));
   log();
