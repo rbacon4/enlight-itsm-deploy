@@ -80,7 +80,10 @@ async function ask(label, { def = '', required = false, secret = false } = {}) {
 
 async function select(label, options) {
   log(`  ${color('bold', label)}`);
-  options.forEach((o, i) => log(`    ${color('cyan', String(i + 1))}) ${o.label}`));
+  options.forEach((o, i) => {
+    log(`    ${color('cyan', String(i + 1))}) ${o.label}`);
+    if (o.desc) log(`       ${color('dim', o.desc)}`);
+  });
   for (;;) {
     const a = (await question(`  Choose ${color('dim', '[1-' + options.length + ']')}: `)).trim();
     const n = parseInt(a, 10);
@@ -93,6 +96,18 @@ async function confirm(label, def = true) {
   const a = (await question(`  ${label} ${color('dim', def ? '[Y/n]' : '[y/N]')}: `)).trim().toLowerCase();
   if (!a) return def;
   return a === 'y' || a === 'yes';
+}
+
+// Print dimmed, indented guidance (a string or an array of lines).
+function info(text) {
+  for (const line of (Array.isArray(text) ? text : [text])) log(color('dim', `  ${line}`));
+}
+
+// A numbered step header.
+function section(n, total, title) {
+  log();
+  log(color('cyan', `  ─── Step ${n}/${total} · ${color('bold', title)}${c.reset}${c.cyan} ───`));
+  log();
 }
 
 // ── Secret generation ────────────────────────────────────────────────────────
@@ -118,12 +133,15 @@ function buildEnv(a) {
     `SESSION_SECRET=${a.sessionSecret}`,
     `SECRETS_ENCRYPTION_KEY=${a.encKey}`,
     '',
-    '# AI (the platform is also selectable in-app under Settings → AI Keys)',
-    `ANTHROPIC_API_KEY=${a.anthropicKey}`,
+    '# AI platform (default for new orgs; also changeable in Settings → AI Keys)',
+    `AI_PROVIDER=${a.aiProvider}`,
+    `ANTHROPIC_API_KEY=${a.anthropicKey || ''}`,
   ];
   if (a.openaiKey) lines.push(`OPENAI_API_KEY=${a.openaiKey}`);
+  lines.push('');
+  lines.push('# Knowledge base embeddings');
+  lines.push(`EMBEDDING_PROVIDER=${a.embeddingProvider}`);
   if (a.voyageKey) lines.push(`VOYAGE_API_KEY=${a.voyageKey}`);
-  lines.push('EMBEDDING_PROVIDER=voyage');
   lines.push('');
   lines.push('# Reverse proxy / TLS (read by Caddy). A hostname enables automatic HTTPS;');
   lines.push('# ":80" serves plain HTTP.');
@@ -170,37 +188,66 @@ function runTf(dir, args) {
 // ── Cloud definitions ────────────────────────────────────────────────────────
 const CLOUDS = {
   gcp: {
-    label: 'Google Cloud Platform (Compute Engine)',
+    label: 'Google Cloud Platform',
+    menuDesc: 'Compute Engine VM · ~$13/mo (e2-small)',
     dir: 'terraform/gcp',
-    creds: 'Run `gcloud auth application-default login` and have a project ready.',
+    credsLines: [
+      'Before continuing, make sure you have:',
+      '  • The gcloud CLI installed and authenticated for Terraform:',
+      '      gcloud auth application-default login',
+      '  • A GCP project — you\'ll need its Project ID (not the display name).',
+    ],
     async prompts() {
-      const project_id   = await ask('GCP project ID', { required: true });
-      const region       = await ask('Region', { def: 'us-central1' });
-      const zone         = await ask('Zone', { def: 'us-central1-a' });
+      info(['Project ID: the unique ID in the GCP console top bar, e.g. my-project-123456.']);
+      const project_id = await ask('GCP project ID', { required: true });
+      info(['', 'Region / zone: where the VM runs. Defaults are fine — pick one near your users.']);
+      const region = await ask('Region', { def: 'us-central1' });
+      const zone   = await ask('Zone', { def: 'us-central1-a' });
+      info(['', 'Machine type: e2-small (2 GB RAM) handles a small team. Use e2-medium for more headroom.']);
       const machine_type = await ask('Machine type', { def: 'e2-small' });
       return { project_id, region, zone, machine_type };
     },
   },
   aws: {
-    label: 'Amazon Web Services (EC2)',
+    label: 'Amazon Web Services',
+    menuDesc: 'EC2 instance · ~$15/mo (t3.small)',
     dir: 'terraform/aws',
-    creds: 'Configure AWS credentials (`aws configure` or AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY). A default VPC is required.',
+    credsLines: [
+      'Before continuing, make sure you have:',
+      '  • AWS credentials configured — `aws configure`, or the env vars',
+      '      AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY.',
+      '  • A default VPC in your chosen region (most accounts already have one).',
+    ],
     async prompts() {
-      const region        = await ask('Region', { def: 'us-east-1' });
+      info(['Region: e.g. us-east-1, us-west-2, eu-west-1. Pick one near your users.']);
+      const region = await ask('Region', { def: 'us-east-1' });
+      info(['', 'Instance type: t3.small (2 GB RAM) is a solid start. Use t3.medium for more headroom.']);
       const instance_type = await ask('Instance type', { def: 't3.small' });
-      const key_name      = await ask('EC2 key pair name for SSH', {});
+      info(['', 'SSH (optional): the name of an existing EC2 key pair lets you SSH in later.',
+            'Leave blank to skip SSH access.']);
+      const key_name = await ask('EC2 key pair name', {});
       return { region, instance_type, key_name };
     },
   },
   digitalocean: {
-    label: 'DigitalOcean (Droplet)',
+    label: 'DigitalOcean',
+    menuDesc: 'Droplet · $12/mo · easiest (just an API token)',
     dir: 'terraform/digitalocean',
-    creds: 'You will paste a DigitalOcean API token (no other setup needed).',
+    credsLines: [
+      'Before continuing, make sure you have:',
+      '  • A DigitalOcean API token with write access. Create one at:',
+      '      https://cloud.digitalocean.com/account/api/tokens',
+    ],
     async prompts() {
-      const do_token     = await ask('DigitalOcean API token', { required: true, secret: true });
-      const region       = await ask('Region', { def: 'nyc1' });
+      info(['Paste your DigitalOcean API token (it starts with dop_v1_).']);
+      const do_token = await ask('DigitalOcean API token', { required: true, secret: true });
+      info(['', 'Region: e.g. nyc1, sfo3, ams3, sgp1. Pick one near your users.']);
+      const region = await ask('Region', { def: 'nyc1' });
+      info(['', 'Droplet size: s-1vcpu-2gb (2 GB RAM) is a good start at $12/mo.']);
       const droplet_size = await ask('Droplet size', { def: 's-1vcpu-2gb' });
-      const fp           = await ask('SSH key fingerprint for access', {});
+      info(['', 'SSH (optional): an SSH key fingerprint from your DO account enables SSH access.',
+            'Find it under Settings → Security. Leave blank to skip.']);
+      const fp = await ask('SSH key fingerprint', {});
       const out = { do_token, region, droplet_size };
       if (fp) out.ssh_key_fingerprints = [fp];
       return out;
@@ -211,38 +258,81 @@ const CLOUDS = {
 // ── Deploy flow ──────────────────────────────────────────────────────────────
 async function deploy(generateOnly) {
   banner();
+  info([
+    'This wizard provisions one small VM on your cloud and runs the full Enlight',
+    'stack on it (app + database + queue + HTTPS proxy). It takes ~5–10 minutes.',
+    'Everything you enter is saved locally; nothing is sent anywhere but your cloud.',
+  ]);
 
-  const cloud = await select('Where would you like to deploy?', [
-    { label: CLOUDS.gcp.label, value: 'gcp' },
-    { label: CLOUDS.aws.label, value: 'aws' },
-    { label: CLOUDS.digitalocean.label, value: 'digitalocean' },
+  // ── Step 1: cloud ──
+  section(1, 4, 'Choose your cloud');
+  info(['Enlight runs on a single VM. Pick where to create it — you\'ll need an account there.']);
+  const cloud = await select('Cloud provider', [
+    { label: CLOUDS.gcp.label, value: 'gcp', desc: CLOUDS.gcp.menuDesc },
+    { label: CLOUDS.aws.label, value: 'aws', desc: CLOUDS.aws.menuDesc },
+    { label: CLOUDS.digitalocean.label, value: 'digitalocean', desc: CLOUDS.digitalocean.menuDesc },
   ]);
   const def = CLOUDS[cloud];
   log();
-  log(color('dim', `  Credentials: ${def.creds}`));
-  log();
+  info(def.credsLines);
 
-  // ── App configuration ──
-  log(color('bold', '  Application configuration'));
-  const anthropicKey = await ask('Anthropic API key (Enter to set later in-app)', {});
-  const more = await confirm('Add other API keys now (OpenAI, Voyage)?', false);
-  let openaiKey = '', voyageKey = '';
-  if (more) {
-    openaiKey = await ask('OpenAI API key', {});
-    voyageKey = await ask('Voyage API key (knowledge base embeddings)', {});
+  // ── Step 2: AI ──
+  section(2, 4, 'AI configuration');
+  info([
+    'Enlight\'s agent uses a large language model to triage and answer tickets.',
+    'Choose a platform now — you can change it any time in Settings → AI Keys.',
+  ]);
+  const aiProvider = await select('AI platform', [
+    { label: 'Anthropic (Claude)', value: 'anthropic', desc: 'Recommended — the platform Enlight is built and tuned for.' },
+    { label: 'OpenAI (GPT)', value: 'openai', desc: 'Use GPT-4o / GPT-4.1 models instead.' },
+  ]);
+  let anthropicKey = '', openaiKey = '';
+  log();
+  if (aiProvider === 'anthropic') {
+    info(['Get a key at https://console.anthropic.com → API Keys.',
+          'You can leave this blank and add it later in the app (the agent stays idle until then).']);
+    anthropicKey = await ask('Anthropic API key', { secret: true });
+  } else {
+    info(['Get a key at https://platform.openai.com/api-keys.',
+          'You can leave this blank and add it later in the app (the agent stays idle until then).']);
+    openaiKey = await ask('OpenAI API key', { secret: true });
   }
-  log(color('dim', '  Tip: supplying a domain enables automatic HTTPS (Caddy + Let\'s Encrypt).'));
-  const domain = await ask('Domain name for this server (optional, enables HTTPS)', {});
-  log();
 
-  // ── Cloud-specific ──
-  log(color('bold', `  ${def.label} settings`));
+  log();
+  info(['Knowledge base search uses an embeddings provider (separate from the chat model above).']);
+  const embeddingProvider = await select('Embeddings provider', [
+    { label: 'Voyage AI', value: 'voyage', desc: 'Recommended — voyage-large-2, free tier at voyageai.com.' },
+    { label: 'OpenAI', value: 'openai', desc: 'text-embedding-3-small — reuses your OpenAI key.' },
+  ]);
+  let voyageKey = '';
+  log();
+  if (embeddingProvider === 'voyage') {
+    info(['Get a key at https://www.voyageai.com (free tier).',
+          'Leave blank to skip knowledge base search for now — you can add it later.']);
+    voyageKey = await ask('Voyage API key', { secret: true });
+  } else if (!openaiKey) {
+    info(['OpenAI embeddings need an OpenAI key (you didn\'t enter one above).']);
+    openaiKey = await ask('OpenAI API key', { secret: true });
+  }
+
+  // ── Step 3: domain ──
+  section(3, 4, 'Domain & HTTPS');
+  info([
+    'If you have a domain, Enlight gets automatic HTTPS (Caddy + Let\'s Encrypt) — no certs to buy.',
+    'After this finishes you\'ll point a DNS A record at the server\'s IP (shown at the end).',
+    'A subdomain like  itsm.yourcompany.com  is recommended.',
+    'Leave blank to serve plain HTTP on port 80 (you can add a domain later).',
+  ]);
+  const domain = await ask('Domain for this server', {});
+
+  // ── Step 4: cloud settings ──
+  section(4, 4, `${def.label} settings`);
   const cloudVars = await def.prompts();
   log();
 
   // ── Generate secrets + write files ──
   const app = {
-    anthropicKey, openaiKey, voyageKey, domain,
+    aiProvider, embeddingProvider, anthropicKey, openaiKey, voyageKey, domain,
     pgPassword: randPass(),
     jwtSecret: randHex(24),
     sessionSecret: randHex(24),

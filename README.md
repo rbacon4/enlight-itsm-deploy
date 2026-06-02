@@ -19,12 +19,31 @@ creates your organisation and admin account.
   ║        Enlight ITSM — Deploy Tool         ║
   ╚═══════════════════════════════════════════╝
 
-  Where would you like to deploy?
-    1) Google Cloud Platform (Compute Engine)
-    2) Amazon Web Services (EC2)
-    3) DigitalOcean (Droplet)
+  ─── Step 1/4 · Choose your cloud ───
+
+  Cloud provider
+    1) Google Cloud Platform
+       Compute Engine VM · ~$13/mo (e2-small)
+    2) Amazon Web Services
+       EC2 instance · ~$15/mo (t3.small)
+    3) DigitalOcean
+       Droplet · $12/mo · easiest (just an API token)
   Choose [1-3]:
 ```
+
+The wizard walks you through four guided steps, with instructions and links at
+each one:
+
+1. **Choose your cloud** — GCP, AWS, or DigitalOcean (with a credentials checklist).
+2. **AI configuration** — pick the agent's **AI platform** (Anthropic Claude or
+   OpenAI GPT) and an embeddings provider for knowledge-base search. Keys are
+   optional here and can be added in-app later; your choice becomes the default
+   (changeable any time under Settings → AI Keys).
+3. **Domain & HTTPS** — supply a domain for automatic HTTPS, or skip for plain HTTP.
+4. **Cloud settings** — region, size, and provider-specific options (sensible
+   defaults throughout).
+
+All secrets are auto-generated for you.
 
 ## What it builds
 
