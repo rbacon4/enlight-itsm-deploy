@@ -4,6 +4,18 @@
 set -euxo pipefail
 export DEBIAN_FRONTEND=noninteractive
 
+# ── Swap ─────────────────────────────────────────────────────────────────────
+# Building the app from source (TypeScript + Vite) can exceed 2 GB of RAM. Add a
+# 2 GB swapfile so small instances (e.g. e2-small / t3.small / s-1vcpu-2gb) don't
+# get OOM-killed mid-build, which would leave the web stack down.
+if [ ! -f /swapfile ]; then
+  fallocate -l 2G /swapfile || dd if=/dev/zero of=/swapfile bs=1M count=2048
+  chmod 600 /swapfile
+  mkswap /swapfile
+  swapon /swapfile
+  echo '/swapfile none swap sw 0 0' >> /etc/fstab
+fi
+
 # ── Install Docker Engine + Compose plugin + git ─────────────────────────────
 apt-get update
 apt-get install -y ca-certificates curl git
