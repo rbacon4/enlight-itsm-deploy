@@ -40,7 +40,9 @@ ${env_content}
 ENLIGHT_ENV_EOF
 
 # ── Build + launch ───────────────────────────────────────────────────────────
+# Pass --env-file explicitly so Compose interpolation (e.g. POSTGRES_PASSWORD)
+# always resolves, regardless of the working directory it's invoked from.
 cd /opt/enlight
-docker compose up -d --build
+docker compose --env-file /opt/enlight/.env up -d --build
 
 echo "Enlight ITSM is starting. First build can take several minutes."
