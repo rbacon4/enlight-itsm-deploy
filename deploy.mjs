@@ -140,6 +140,10 @@ function buildEnv(a) {
     `SESSION_SECRET=${a.sessionSecret}`,
     `SECRETS_ENCRYPTION_KEY=${a.encKey}`,
     '',
+    '# GitHub token — used to clone the app repo if it is private, and to power',
+    '# the in-app update check (Settings → Updates) for private repos.',
+    `GITHUB_TOKEN=${a.githubToken || ''}`,
+    '',
     '# AI platform (default for new orgs; also changeable in Settings → AI Keys)',
     `AI_PROVIDER=${a.aiProvider}`,
     `ANTHROPIC_API_KEY=${a.anthropicKey || ''}`,
@@ -412,6 +416,15 @@ async function deploy(generateOnly) {
   log();
   info(def.credsLines);
 
+  log();
+  info([
+    'Source access: the server builds Enlight from its GitHub repo. If that repo is',
+    'PRIVATE, paste a GitHub token (classic, with "repo" scope, or fine-grained with',
+    'read access) so the server can clone it. Public repo? Just press Enter.',
+    'Create one at https://github.com/settings/tokens',
+  ]);
+  const githubToken = await ask('GitHub access token (only if the app repo is private)', { secret: true });
+
   // ── Step 2: AI ──
   section(2, 4, 'AI configuration');
   reqs([
@@ -481,7 +494,7 @@ async function deploy(generateOnly) {
 
   // ── Generate secrets + write files ──
   const app = {
-    aiProvider, embeddingProvider, anthropicKey, openaiKey, voyageKey, domain,
+    aiProvider, embeddingProvider, anthropicKey, openaiKey, voyageKey, domain, githubToken,
     pgPassword: randPass(),
     jwtSecret: randHex(24),
     sessionSecret: randHex(24),

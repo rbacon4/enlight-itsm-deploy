@@ -59,7 +59,18 @@ retry 5 clone "${deploy_repo}" /opt/enlight/_bundle
 cp /opt/enlight/_bundle/docker-compose.yml /opt/enlight/docker-compose.yml
 cp /opt/enlight/_bundle/Caddyfile          /opt/enlight/Caddyfile
 
-retry 5 clone "${app_repo}" /opt/enlight/enlight-itsm
+# App repo: if a GitHub token is present in .env, embed it so a PRIVATE repo can
+# be cloned. (Unbraced bash vars below so Terraform's templatefile leaves them be.)
+GH_TOKEN=$(grep -E '^GITHUB_TOKEN=' /opt/enlight/.env | cut -d= -f2- || true)
+APP_URL="${app_repo}"
+if [ -n "$GH_TOKEN" ]; then
+  APP_URL=$(printf '%s' "${app_repo}" | sed -E "s#^https://#https://$GH_TOKEN@#")
+fi
+retry 5 clone "$APP_URL" /opt/enlight/enlight-itsm
+
+# Record the deployed commit so Settings → Updates can compare against upstream.
+DEPLOYED_SHA=$(git -C /opt/enlight/enlight-itsm rev-parse --short HEAD 2>/dev/null || echo "")
+if [ -n "$DEPLOYED_SHA" ]; then echo "APP_COMMIT=$DEPLOYED_SHA" >> /opt/enlight/.env; fi
 
 # ── Build + launch ───────────────────────────────────────────────────────────
 # Pass --env-file explicitly so Compose interpolation (e.g. POSTGRES_PASSWORD)

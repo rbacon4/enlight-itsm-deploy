@@ -87,6 +87,11 @@ runs on one modest instance. Default sizes:
    | **AWS** | `aws configure` (or `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` env vars). Needs a default VPC. |
    | **DigitalOcean** | A [personal access token](https://cloud.digitalocean.com/account/api/tokens) — you paste it into the wizard. |
 
+> **Private app repo?** `enlight-itsm` is private by default. The wizard asks for an
+> optional **GitHub token** (classic with `repo` scope, or fine-grained read access)
+> so the server can clone it — and it also powers the in-app update check. For a
+> public repo, just press Enter. Create a token at https://github.com/settings/tokens
+
 You'll also want an **Anthropic API key** for the AI agent (you can also add it
 later in the app under Settings → AI Keys).
 
