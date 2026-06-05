@@ -549,7 +549,15 @@ async function provision(def, domain) {
   log();
   log(color('blue', '  → terraform apply'));
   if (await runTf(def.dir, ['apply', '-input=false', '-auto-approve']) !== 0) {
-    err('terraform apply failed. It\'s safe to run `node deploy.mjs` again to resume from where it stopped.');
+    err('terraform apply failed.');
+    info([
+      'If the error above mentions auth / invalid_grant / reauth (GCP) or expired',
+      'credentials, refresh them and resume:',
+      '  • GCP:          gcloud auth application-default login',
+      '  • AWS:          aws sso login   (or refresh your access keys)',
+      '  • DigitalOcean: generate a new API token and re-run',
+      'Then run `node deploy.mjs` again and choose Resume — it picks up where it stopped.',
+    ]);
     process.exit(1);
   }
 
@@ -599,7 +607,10 @@ async function destroy() {
   if (!tf) { err('Terraform not found (system PATH or ./bin). Install it, then retry.'); return; }
   TERRAFORM = tf;
   if (await runTf(dir, ['init', '-input=false']) !== 0) { err('terraform init failed.'); return; }
-  await runTf(dir, ['destroy', '-input=false', '-auto-approve']);
+  if (await runTf(dir, ['destroy', '-input=false', '-auto-approve']) !== 0) {
+    err('terraform destroy failed (see above) — resources may still exist. Re-auth if needed and retry.');
+    return;
+  }
   ok('Destroyed.');
 }
 
