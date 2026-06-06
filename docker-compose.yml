@@ -42,6 +42,12 @@ services:
     build:
       context: ./enlight-itsm
       dockerfile: Dockerfile.prod
+      args:
+        # Bake the current git commit into the image so the version page can
+        # detect when updates are available.  Set APP_COMMIT in the shell or
+        # in .env before running `docker compose up --build`:
+        #   export APP_COMMIT=$(git -C enlight-itsm rev-parse HEAD)
+        APP_COMMIT: ${APP_COMMIT:-}
     restart: unless-stopped
     env_file: .env
     expose:
