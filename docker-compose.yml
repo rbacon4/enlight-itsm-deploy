@@ -46,6 +46,17 @@ services:
     env_file: .env
     expose:
       - "3000"
+    environment:
+      # Absolute path to the host deploy directory, so the in-app update button
+      # can call `git pull` and `docker compose up --build` through the socket below.
+      HOST_ENLIGHT_DIR: /opt/enlight
+    volumes:
+      # Docker socket — gives the app container access to the host Docker daemon
+      # so it can rebuild itself when "Apply Update" is clicked in Settings → Updates.
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Host deploy directory — the update command needs to read .env and
+      # docker-compose.yml to pass to `docker compose`.
+      - /opt/enlight:/opt/enlight
     depends_on:
       postgres:
         condition: service_healthy
